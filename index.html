@@ -39,6 +39,16 @@
     border: 1px solid #d0d7de; border-radius: 12px; background: #f6f8fa; outline: none;
   }
   #search:focus { border-color: #1a7f37; background: #fff; }
+  .tagbar {
+    display: flex; gap: 8px; overflow-x: auto; margin-top: 10px;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px;
+  }
+  .tagbar::-webkit-scrollbar { display: none; }
+  .tagchip {
+    flex: none; padding: 6px 14px; border-radius: 999px; font-size: 13.5px;
+    background: #eef1f4; color: #57606a; cursor: pointer; user-select: none;
+  }
+  .tagchip.active { background: #1a7f37; color: #fff; font-weight: 600; }
   main { max-width: 560px; margin: 0 auto; padding: 14px 14px 0; }
   .grp {
     background: #fff; border-radius: 16px; padding: 14px;
@@ -55,6 +65,7 @@
     padding: 8px 14px; border-radius: 999px; font-size: 15px; line-height: 1.3;
     user-select: none; cursor: pointer;
   }
+  .chip i { font-style: normal; opacity: .55; font-size: 12px; }
   .chip.c-green  { background: #e8f7ee; color: #166534; }
   .chip.c-yellow { background: #fdf3d8; color: #92600a; }
   .chip.c-red    { background: #fdecec; color: #b91c1c; }
@@ -86,7 +97,14 @@
     padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
     max-width: 560px; margin: 0 auto;
   }
-  .sheet h3 { font-size: 16px; margin-bottom: 14px; text-align: center; }
+  .sheet h3 { font-size: 16px; margin-bottom: 12px; text-align: center; }
+  .sheet .lbl { font-size: 12.5px; color: #8b949e; margin: 4px 0 8px; }
+  .sheettags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .st {
+    padding: 7px 14px; border-radius: 999px; font-size: 14px;
+    background: #eef1f4; color: #57606a; cursor: pointer; user-select: none;
+  }
+  .st.on { background: #1a7f37; color: #fff; }
   .sheet .movebtn {
     display: block; width: 100%; padding: 13px; margin-bottom: 10px;
     border-radius: 12px; border: 1px solid #d0d7de; background: #f6f8fa;
@@ -133,6 +151,7 @@
     <button class="btn" id="editBtn">✏️ 编辑</button>
   </div>
   <input id="search" type="search" placeholder="搜索食材，如：番茄 / 虾 / 汤底…">
+  <div class="tagbar" id="tagbar"></div>
 </div>
 
 <main>
@@ -188,13 +207,26 @@
 var REPO = "jimou0018-ship-it/food-traffic-light";
 var GROUPS = ["green", "yellow", "red"];
 var LABEL = { green: "🟢 放心吃", yellow: "🟡 能吃但不好吃", red: "🔴 不能吃" };
+var TAGS = ["主食", "蔬菜", "肉", "水产", "水果", "零食", "汤底调味", "滋补饮品"];
 var data = { green: [], yellow: [], red: [] };
 var editing = false;
 var searchKw = "";
+var activeTag = "";
 
 function $(id) { return document.getElementById(id); }
 function esc(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function normItem(it) {
+  if (typeof it === "string") return { name: it, tags: [] };
+  return { name: it.name || "", tags: Array.isArray(it.tags) ? it.tags.filter(function (t) { return TAGS.indexOf(t) > -1; }) : [] };
+}
+function normData(d) {
+  return {
+    green: (d.green || []).map(normItem),
+    yellow: (d.yellow || []).map(normItem),
+    red: (d.red || []).map(normItem)
+  };
 }
 function toast(msg, ms) {
   var t = $("toast");
@@ -207,16 +239,34 @@ function saveDraft() {
   try { localStorage.setItem("ftl_draft", JSON.stringify(data)); } catch (e) {}
 }
 
+function buildTagbar() {
+  var bar = $("tagbar");
+  bar.innerHTML = "";
+  var all = document.createElement("span");
+  all.className = "tagchip" + (activeTag === "" ? " active" : "");
+  all.textContent = "全部";
+  all.onclick = function () { activeTag = ""; buildTagbar(); render(); };
+  bar.appendChild(all);
+  TAGS.forEach(function (t) {
+    var el = document.createElement("span");
+    el.className = "tagchip" + (activeTag === t ? " active" : "");
+    el.textContent = t;
+    el.onclick = function () { activeTag = (activeTag === t ? "" : t); buildTagbar(); render(); };
+    bar.appendChild(el);
+  });
+}
+
 function render() {
   var visible = 0;
   GROUPS.forEach(function (g) {
     var wrap = $("chips-" + g);
     wrap.innerHTML = "";
-    data[g].forEach(function (name, i) {
+    data[g].forEach(function (item, i) {
       var el = document.createElement("span");
       el.className = "chip c-" + g;
-      el.textContent = name;
-      var hit = !searchKw || name.toLowerCase().indexOf(searchKw) > -1;
+      el.innerHTML = esc(item.name) + (item.tags.length ? ' <i>· ' + item.tags.map(esc).join("/") + "</i>" : "");
+      var hit = (!searchKw || item.name.toLowerCase().indexOf(searchKw) > -1)
+        && (!activeTag || item.tags.indexOf(activeTag) > -1);
       if (!hit) el.classList.add("hidden"); else visible++;
       el.onclick = function () { if (editing) openSheet(g, i); };
       wrap.appendChild(el);
@@ -229,23 +279,39 @@ function render() {
     }
     $("cnt-" + g).textContent = "(" + data[g].length + ")";
   });
-  $("noresult").style.display = (visible === 0 && searchKw) ? "block" : "none";
+  $("noresult").style.display = (visible === 0 && (searchKw || activeTag)) ? "block" : "none";
   document.body.classList.toggle("editing", editing);
   $("editBtn").textContent = editing ? "✅ 完成" : "✏️ 编辑";
   if (editing) saveDraft();
 }
 
 function openSheet(g, i) {
-  var name = data[g][i];
-  var html = '<h3>' + esc(name) + '</h3>';
+  var item = data[g][i];
+  var html = '<h3>' + esc(item.name) + '</h3>';
+  html += '<div class="lbl">标签（点选，可多选）</div><div class="sheettags">';
+  TAGS.forEach(function (t) {
+    html += '<span class="st' + (item.tags.indexOf(t) > -1 ? " on" : "") + '" data-tag="' + t + '">' + t + "</span>";
+  });
+  html += "</div>";
+  html += '<div class="lbl">移动到分组</div>';
   GROUPS.forEach(function (t) {
     html += '<button class="movebtn m-' + t + '"' + (t === g ? " disabled" : "") +
-      ' data-to="' + t + '">' + (t === g ? "当前分组：" : "移动到：") + LABEL[t] + "</button>";
+      ' data-to="' + t + '">' + (t === g ? "当前：" : "") + LABEL[t] + "</button>";
   });
   html += '<button class="movebtn" style="background:#fdecec;border-color:#fecaca;color:#b91c1c" data-del="1">❌ 从清单删除</button>';
-  html += '<button class="btn cancel" id="sheetCancel">取消</button>';
+  html += '<button class="btn cancel" id="sheetCancel">完成</button>';
   $("sheet").innerHTML = html;
   $("sheetMask").classList.add("show");
+
+  $("sheet").querySelectorAll("[data-tag]").forEach(function (b) {
+    b.onclick = function () {
+      var t = b.getAttribute("data-tag");
+      var p = item.tags.indexOf(t);
+      if (p > -1) item.tags.splice(p, 1); else item.tags.push(t);
+      b.classList.toggle("on");
+      render();
+    };
+  });
   $("sheet").querySelectorAll("[data-to]").forEach(function (b) {
     b.onclick = function () {
       var to = b.getAttribute("data-to");
@@ -271,11 +337,12 @@ document.querySelectorAll("[data-add]").forEach(function (btn) {
     var inp = $("add-" + g);
     var v = inp.value.trim();
     if (!v) return;
-    var dup = GROUPS.some(function (t) { return data[t].indexOf(v) > -1; });
+    var dup = GROUPS.some(function (t) { return data[t].some(function (x) { return x.name === v; }); });
     if (dup) { toast("「" + v + "」已经在清单里了"); return; }
-    data[g].push(v);
+    data[g].push({ name: v, tags: [] });
     inp.value = "";
     render();
+    openSheet(g, data[g].length - 1);
   }
   btn.onclick = doAdd;
   $("add-" + g).addEventListener("keydown", function (e) { if (e.key === "Enter") doAdd(); });
@@ -295,7 +362,7 @@ $("editBtn").onclick = function () {
     editing = false;
   } else {
     editing = true;
-    toast("编辑模式：点击食材可移动/删除，每组下方可添加");
+    toast("编辑模式：点击食材可改标签/移动/删除，每组下方可添加");
   }
   render();
 };
@@ -375,18 +442,19 @@ function loadRemote(cb) {
   fetch("data.json?t=" + Date.now())
     .then(function (r) { return r.json(); })
     .then(function (d) {
-      data = { green: d.green || [], yellow: d.yellow || [], red: d.red || [] };
+      data = normData(d);
       render();
       if (cb) cb();
     })
     .catch(function () { toast("加载失败，请检查网络后刷新"); });
 }
 
+buildTagbar();
 loadRemote(function () {
   var draft = localStorage.getItem("ftl_draft");
   if (draft) {
     try {
-      var d = JSON.parse(draft);
+      var d = normData(JSON.parse(draft));
       if (JSON.stringify(d) !== JSON.stringify(data)) {
         data = d;
         editing = true;
